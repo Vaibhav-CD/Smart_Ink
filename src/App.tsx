@@ -31,6 +31,13 @@ export function App() {
     strokes: Stroke[];
   } | undefined>(undefined);
 
+  // Uploaded image trigger
+  const [uploadedImageTrigger, setUploadedImageTrigger] = useState<{
+    id: number;
+    dataUrl: string;
+  } | undefined>(undefined);
+
+
   const handleUndo = useCallback(() => {
     setUndoCount((c) => c + 1);
   }, []);
@@ -109,6 +116,7 @@ export function App() {
         variablesCount={Object.keys(variables).length}
         onOpenVariables={() => setIsVariablesOpen(true)}
         onInsertSample={handleInsertSample}
+        onUploadImage={(dataUrl) => setUploadedImageTrigger({ id: Date.now(), dataUrl })}
       />
 
       {/* Main Digital Ink Canvas */}
@@ -124,6 +132,7 @@ export function App() {
           redoTrigger={redoCount}
           clearTrigger={clearCount}
           sampleEquationTrigger={sampleTrigger}
+          uploadedImageTrigger={uploadedImageTrigger}
           onUndoRedoStateChange={(u, r) => {
             setCanUndo(u);
             setCanRedo(r);

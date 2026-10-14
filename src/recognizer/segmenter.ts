@@ -9,6 +9,8 @@ import { computeBoundingBox, mergeBoundingBoxes, boxesIntersect } from '../canva
 import { HybridMathClassifier } from './classifier';
 import { MathEngine } from '../engine/parser';
 import { FunctionPlotter } from '../engine/plotter';
+import { QuestionSolver } from '../engine/questionSolver';
+
 
 export class EquationSegmenter {
   /**
@@ -117,11 +119,36 @@ export class EquationSegmenter {
       }
     }
 
-    // Only equations with an equals sign or plottable functions are evaluated
+    // Check if plottable or if it has an equals sign
     const isPlottable = FunctionPlotter.isPlottable(rawExpr);
     if (!hasEquals && !isPlottable) {
+      // Check for natural language question (e.g. "what is the value of cos(0)")
+      const qSol = QuestionSolver.solve(rawExpr);
+      if (qSol.isSuccess && qSol.detectedType !== 'general') {
+        const lineBounds = mergeBoundingBoxes(lineStrokes.map((s) => s.bounds));
+        return {
+          id: eqId,
+          strokeIds: lineStrokes.map((s) => s.id),
+          bounds: lineBounds,
+          rawExpression: rawExpr,
+          evalResult: {
+            status: 'success',
+            displayText: qSol.result,
+            expressionString: rawExpr,
+          },
+          projectionAnchor: {
+            x: lineBounds.maxX + 14,
+            y: lineBounds.centerY,
+          },
+          confidence: charClusters.length > 0 ? totalConfidence / charClusters.length : 0.9,
+          isPlottable: false,
+          plotData: null,
+          lastUpdated: Date.now(),
+        };
+      }
       return null;
     }
+
 
     const lineBounds = mergeBoundingBoxes(lineStrokes.map((s) => s.bounds));
     const avgConfidence = charClusters.length > 0 ? totalConfidence / charClusters.length : 0;

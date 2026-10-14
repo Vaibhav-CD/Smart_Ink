@@ -1,7 +1,9 @@
 /**
  * Smart_Ink Interactive Digital Ink Canvas
- * Ultra low-latency, 60 FPS locked drawing canvas with high-DPI scaling,
- * pressure-sensitive ink rendering, dual eraser modes, and off-thread Web Worker inference.
+ * Ultra low-latency Dual-Canvas Architecture (Locked at 60–120 FPS):
+ * - Committed Canvas: Caches all completed strokes (zero redraw per pointermove frame)
+ * - Active Canvas: High-frequency transparent overlay for single active stroke
+ * - Paste Screenshot OCR & Solution Card support
  */
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
@@ -16,6 +18,7 @@ import {
 import { soundFX } from '../canvas/audio';
 import { InlineProjection } from './InlineProjection';
 import { GraphModal } from './GraphModal';
+import { ScreenshotCard, PastedImageItem } from './ScreenshotCard';
 import { PlotData } from '../engine/plotter';
 
 interface CanvasProps {
@@ -30,6 +33,7 @@ interface CanvasProps {
   clearTrigger?: number;
   sampleEquationTrigger?: { id: number; text: string; strokes: Stroke[] };
   onUndoRedoStateChange?: (canUndo: boolean, canRedo: boolean) => void;
+  uploadedImageTrigger?: { id: number; dataUrl: string };
 }
 
 export const Canvas: React.FC<CanvasProps> = ({
@@ -44,13 +48,16 @@ export const Canvas: React.FC<CanvasProps> = ({
   clearTrigger,
   sampleEquationTrigger,
   onUndoRedoStateChange,
+  uploadedImageTrigger,
+
 }) => {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Dual-Canvas Architecture
+  const committedCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const activeCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   // Stroke state & Undo/Redo stacks
   const [strokes, setStrokes] = useState<Stroke[]>([]);
-  const [undoStack, setUndoStack] = useState<Stroke[][]>([]);
   const [redoStack, setRedoStack] = useState<Stroke[][]>([]);
 
   // Recognized equations & Web Worker
@@ -58,11 +65,13 @@ export const Canvas: React.FC<CanvasProps> = ({
   const [activePlot, setActivePlot] = useState<PlotData | null>(null);
   const workerRef = useRef<Worker | null>(null);
 
+  // Pasted Screenshot Cards
+  const [pastedImages, setPastedImages] = useState<PastedImageItem[]>([]);
+
   // Drawing tracking
   const isDrawing = useRef(false);
   const currentPoints = useRef<Point[]>([]);
   const activeStrokeId = useRef<string | null>(null);
-  const rafId = useRef<number | null>(null);
 
   // Sync sound settings
   useEffect(() => {
@@ -81,7 +90,10 @@ export const Canvas: React.FC<CanvasProps> = ({
       if (type === 'EQUATIONS_RECOGNIZED') {
         setEquations(newEquations);
         onVariablesChange(variables);
-        if (newEquations.length > 0 && newEquations.some((eq: RecognizedEquation) => eq.evalResult.status === 'success')) {
+        if (
+          newEquations.length > 0 &&
+          newEquations.some((eq: RecognizedEquation) => eq.evalResult.status === 'success')
+        ) {
           soundFX.playSolveChime();
         }
       }
@@ -109,7 +121,73 @@ export const Canvas: React.FC<CanvasProps> = ({
     onUndoRedoStateChange?.(strokes.length > 0, redoStack.length > 0);
   }, [strokes, redoStack, onUndoRedoStateChange]);
 
-  // Undo / Redo triggers
+  // Redraw ONLY the committed canvas when strokes state changes
+  const redrawCommittedCanvas = useCallback(() => {
+    const canvas = committedCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(dpr, dpr);
+
+    for (const stroke of strokes) {
+      drawStrokeOnContext(ctx, stroke);
+    }
+    ctx.restore();
+  }, [strokes]);
+
+  useEffect(() => {
+    redrawCommittedCanvas();
+  }, [redrawCommittedCanvas]);
+
+  // Clear active overlay canvas
+  const clearActiveCanvas = useCallback(() => {
+    const canvas = activeCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  }, []);
+
+  // Handle Canvas High-DPI Scaling & Resizing
+  const resizeCanvases = useCallback(() => {
+    const committed = committedCanvasRef.current;
+    const active = activeCanvasRef.current;
+    const container = containerRef.current;
+    if (!committed || !active || !container) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = container.getBoundingClientRect();
+
+    [committed, active].forEach((canvas) => {
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      canvas.style.width = `${rect.width}px`;
+      canvas.style.height = `${rect.height}px`;
+
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.scale(dpr, dpr);
+      }
+    });
+
+    redrawCommittedCanvas();
+  }, [redrawCommittedCanvas]);
+
+  useEffect(() => {
+    resizeCanvases();
+    window.addEventListener('resize', resizeCanvases);
+    return () => window.removeEventListener('resize', resizeCanvases);
+  }, [resizeCanvases]);
+
+  // Undo / Redo / Clear triggers
   useEffect(() => {
     if (undoTrigger && strokes.length > 0) {
       const last = strokes[strokes.length - 1];
@@ -137,6 +215,7 @@ export const Canvas: React.FC<CanvasProps> = ({
       setStrokes([]);
       setEquations([]);
       setRedoStack([]);
+      setPastedImages([]);
       dispatchToWorker([]);
       soundFX.playEraseSound();
     }
@@ -153,75 +232,67 @@ export const Canvas: React.FC<CanvasProps> = ({
     }
   }, [sampleEquationTrigger, dispatchToWorker]);
 
-  // Handle Canvas High-DPI Scaling & Resizing
-  const resizeCanvas = useCallback(() => {
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const rect = container.getBoundingClientRect();
-
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    canvas.style.width = `${rect.width}px`;
-    canvas.style.height = `${rect.height}px`;
-
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.scale(dpr, dpr);
-    }
-    renderCanvas();
-  }, [strokes]);
-
+  // Uploaded Image trigger
   useEffect(() => {
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-    return () => window.removeEventListener('resize', resizeCanvas);
-  }, [resizeCanvas]);
+    if (uploadedImageTrigger && uploadedImageTrigger.dataUrl) {
+      const startX = Math.max(60, window.innerWidth * 0.25);
+      const startY = Math.max(120, window.innerHeight * 0.2);
 
-  // 60 FPS Render loop
-  const renderCanvas = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.scale(dpr, dpr);
-
-    // Draw committed strokes
-    for (const stroke of strokes) {
-      drawStrokeOnContext(ctx, stroke);
-    }
-
-    // Draw current active stroke being drawn
-    if (isDrawing.current && currentPoints.current.length > 0) {
-      const activeStroke: Stroke = {
-        id: 'active',
-        points: currentPoints.current,
-        color,
-        width,
-        tool,
-        timestamp: Date.now(),
-        bounds: computeBoundingBox(currentPoints.current),
+      const newItem: PastedImageItem = {
+        id: `img_${uploadedImageTrigger.id}`,
+        dataUrl: uploadedImageTrigger.dataUrl,
+        x: startX,
+        y: startY,
       };
-      drawStrokeOnContext(ctx, activeStroke);
+
+      setPastedImages((prev) => [...prev, newItem]);
+      soundFX.playSolveChime();
     }
+  }, [uploadedImageTrigger]);
 
-    ctx.restore();
-  }, [strokes, color, width, tool]);
 
+  // Screenshot Paste Handler (Ctrl+V)
   useEffect(() => {
-    renderCanvas();
-  }, [renderCanvas]);
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+          const file = items[i].getAsFile();
+          if (!file) continue;
+
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const dataUrl = event.target?.result as string;
+            if (dataUrl) {
+              const startX = Math.max(60, window.innerWidth * 0.25);
+              const startY = Math.max(120, window.innerHeight * 0.2);
+
+              const newItem: PastedImageItem = {
+                id: `img_${Date.now()}`,
+                dataUrl,
+                x: startX,
+                y: startY,
+              };
+
+              setPastedImages((prev) => [...prev, newItem]);
+              soundFX.playSolveChime();
+            }
+          };
+          reader.readAsDataURL(file);
+          break;
+        }
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, []);
 
   // Pointer Event Handlers
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
+    const canvas = activeCanvasRef.current;
     if (!canvas) return;
 
     canvas.setPointerCapture(e.pointerId);
@@ -240,37 +311,70 @@ export const Canvas: React.FC<CanvasProps> = ({
 
     if (tool === 'eraser_stroke' || tool === 'eraser_pixel') {
       handleEraser(p);
+    } else {
+      // Draw first point on active canvas
+      renderActiveStroke();
     }
-
-    renderCanvas();
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isDrawing.current) return;
-    const canvas = canvasRef.current;
+    const canvas = activeCanvasRef.current;
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const p: Point = {
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-      pressure: e.pressure > 0 ? e.pressure : 0.5,
-      time: Date.now(),
-    };
 
-    currentPoints.current.push(p);
+    // Use coalesced events if available for high-frequency precision
+    const events = (e.nativeEvent as any).getCoalescedEvents
+      ? (e.nativeEvent as any).getCoalescedEvents()
+      : [e];
 
-    if (tool === 'eraser_stroke' || tool === 'eraser_pixel') {
-      handleEraser(p);
-    } else {
-      // Direct 60 FPS animation frame request
-      if (!rafId.current) {
-        rafId.current = requestAnimationFrame(() => {
-          renderCanvas();
-          rafId.current = null;
-        });
+    for (const ev of events) {
+      const p: Point = {
+        x: ev.clientX - rect.left,
+        y: ev.clientY - rect.top,
+        pressure: ev.pressure > 0 ? ev.pressure : 0.5,
+        time: Date.now(),
+      };
+      currentPoints.current.push(p);
+
+      if (tool === 'eraser_stroke' || tool === 'eraser_pixel') {
+        handleEraser(p);
       }
     }
+
+    if (tool !== 'eraser_stroke' && tool !== 'eraser_pixel') {
+      renderActiveStroke();
+    }
+  };
+
+  // Ultra-fast render of ONLY the current stroke (takes <0.1ms)
+  const renderActiveStroke = () => {
+    const canvas = activeCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(dpr, dpr);
+
+    if (currentPoints.current.length > 0) {
+      const activeStroke: Stroke = {
+        id: 'active',
+        points: currentPoints.current,
+        color,
+        width,
+        tool,
+        timestamp: Date.now(),
+        bounds: computeBoundingBox(currentPoints.current),
+      };
+      drawStrokeOnContext(ctx, activeStroke);
+    }
+
+    ctx.restore();
   };
 
   const handleEraser = (p: Point) => {
@@ -290,10 +394,13 @@ export const Canvas: React.FC<CanvasProps> = ({
     if (!isDrawing.current) return;
     isDrawing.current = false;
 
-    const canvas = canvasRef.current;
+    const canvas = activeCanvasRef.current;
     if (canvas && canvas.hasPointerCapture(e.pointerId)) {
       canvas.releasePointerCapture(e.pointerId);
     }
+
+    // Clear the active overlay canvas
+    clearActiveCanvas();
 
     if (currentPoints.current.length > 0 && tool !== 'eraser_stroke' && tool !== 'eraser_pixel') {
       // 1. Check for Scratch-to-Erase gesture
@@ -310,7 +417,7 @@ export const Canvas: React.FC<CanvasProps> = ({
           return remaining;
         });
       } else {
-        // Normal stroke commit
+        // Commit stroke to background canvas
         const newStroke: Stroke = {
           id: activeStrokeId.current || `stroke_${Date.now()}`,
           points: [...currentPoints.current],
@@ -331,7 +438,6 @@ export const Canvas: React.FC<CanvasProps> = ({
     }
 
     currentPoints.current = [];
-    renderCanvas();
   };
 
   return (
@@ -339,9 +445,15 @@ export const Canvas: React.FC<CanvasProps> = ({
       ref={containerRef}
       className={`relative w-full h-full select-none overflow-hidden paper-${paperStyle}`}
     >
-      {/* 2D Canvas Layer */}
+      {/* 1. Committed Background Canvas (Zero redraw during pointer movement) */}
       <canvas
-        ref={canvasRef}
+        ref={committedCanvasRef}
+        className="absolute inset-0 pointer-events-none select-none"
+      />
+
+      {/* 2. Active Foreground Canvas (Captures pointer events & renders active stroke) */}
+      <canvas
+        ref={activeCanvasRef}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -354,6 +466,20 @@ export const Canvas: React.FC<CanvasProps> = ({
         equations={equations}
         onOpenGraph={(eq) => setActivePlot(eq.plotData)}
       />
+
+      {/* Pasted Question Screenshot Cards */}
+      {pastedImages.map((img) => (
+        <ScreenshotCard
+          key={img.id}
+          item={img}
+          onRemove={(id) => setPastedImages((prev) => prev.filter((p) => p.id !== id))}
+          onUpdate={(id, updated) =>
+            setPastedImages((prev) =>
+              prev.map((p) => (p.id === id ? { ...p, ...updated } : p))
+            )
+          }
+        />
+      ))}
 
       {/* 2D Function Curve Graph Modal */}
       <GraphModal

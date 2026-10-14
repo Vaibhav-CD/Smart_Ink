@@ -20,7 +20,9 @@ import {
   Sparkles,
   ChevronDown,
   ShieldCheck,
+  ImagePlus,
 } from 'lucide-react';
+
 import { SAMPLE_PRESETS, SamplePreset } from '../canvas/sampleEquations';
 
 interface ToolbarProps {
@@ -42,7 +44,9 @@ interface ToolbarProps {
   variablesCount: number;
   onOpenVariables: () => void;
   onInsertSample: (preset: SamplePreset) => void;
+  onUploadImage: (dataUrl: string) => void;
 }
+
 
 const INK_COLORS = [
   { name: 'Ink Black', value: '#18181b' },
@@ -78,9 +82,12 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   variablesCount,
   onOpenVariables,
   onInsertSample,
+  onUploadImage,
 }) => {
   const [showSamples, setShowSamples] = useState(false);
   const [showPaperMenu, setShowPaperMenu] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
 
   return (
     <header className="absolute top-4 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 p-2 bg-white/85 dark:bg-zinc-900/85 backdrop-blur-xl border border-zinc-200/80 dark:border-zinc-800/80 rounded-2xl shadow-xl select-none max-w-[95vw] overflow-x-auto">
@@ -294,6 +301,36 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             ))}
           </div>
         )}
+      </div>
+
+      {/* Paste / Upload Screenshot OCR */}
+      <div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) {
+              const reader = new FileReader();
+              reader.onload = (ev) => {
+                const dataUrl = ev.target?.result as string;
+                if (dataUrl) onUploadImage(dataUrl);
+              };
+              reader.readAsDataURL(file);
+            }
+            e.target.value = '';
+          }}
+        />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 border border-emerald-300 dark:border-emerald-800 shadow-xs transition-all"
+          title="Paste (Ctrl+V) or Upload Question Screenshot for On-Device OCR Solving"
+        >
+          <ImagePlus size={14} />
+          <span className="hidden sm:inline">Paste Image</span>
+        </button>
       </div>
 
       {/* Clear Canvas */}

@@ -140,7 +140,50 @@ export const SAMPLE_PRESETS: SamplePreset[] = [
       return strokes;
     },
   },
+  {
+    id: 'trig_cos',
+    name: 'cos(0) =',
+    description: 'Trigonometric evaluation (1)',
+    generateStrokes: (sx, sy) => {
+      const strokes: Stroke[] = [];
+      let x = sx;
+      const y = sy;
+      const w = 3.5;
+      const c = '#1e1b4b';
+
+      // 'c'
+      strokes.push(makeStroke([[x + 18, y + 8], [x + 5, y + 16], [x + 5, y + 30], [x + 18, y + 38]], c, w));
+      x += 26;
+
+      // 'o'
+      strokes.push(makeStroke([[x + 10, y + 10], [x, y + 20], [x + 10, y + 38], [x + 20, y + 20], [x + 10, y + 10]], c, w));
+      x += 26;
+
+      // 's'
+      strokes.push(makeStroke([[x + 16, y + 10], [x + 5, y + 16], [x + 15, y + 26], [x + 4, y + 38]], c, w));
+      x += 24;
+
+      // '('
+      strokes.push(makeStroke([[x + 10, y + 5], [x + 2, y + 22], [x + 10, y + 42]], c, w));
+      x += 16;
+
+      // '0'
+      strokes.push(makeStroke([[x + 10, y + 8], [x, y + 22], [x + 10, y + 40], [x + 18, y + 22], [x + 10, y + 8]], c, w));
+      x += 24;
+
+      // ')'
+      strokes.push(makeStroke([[x + 2, y + 5], [x + 10, y + 22], [x + 2, y + 42]], c, w));
+      x += 20;
+
+      // '='
+      strokes.push(makeStroke([[x, y + 18], [x + 22, y + 18]], c, w));
+      strokes.push(makeStroke([[x, y + 28], [x + 22, y + 28]], c, w));
+
+      return strokes;
+    },
+  },
 ];
+
 
 function makeStroke(pts: [number, number][], color: string, width: number): Stroke {
   const points: Point[] = pts.map(([x, y]) => ({ x, y, pressure: 0.5, time: Date.now() }));

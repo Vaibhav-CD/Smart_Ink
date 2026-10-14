@@ -153,22 +153,44 @@ export class EquationSegmenter {
     const lineBounds = mergeBoundingBoxes(lineStrokes.map((s) => s.bounds));
     const avgConfidence = charClusters.length > 0 ? totalConfidence / charClusters.length : 0;
 
-    // Evaluate expression
-    const evalResult = mathEngine.evaluate(rawExpr);
-
-    // Determine projection point (directly adjacent to the '=' sign, or right side of line)
+    // 1. Check if it's a linear algebraic equation (e.g. "3x+5=7", "2x-4=10", "solve 5x=25")
+    const linearSol = QuestionSolver.solve(rawExpr);
+    let evalResult: any;
     let anchor: Point;
-    if (equalsBounds) {
-      anchor = {
-        x: equalsBounds.maxX + 14,
-        y: equalsBounds.centerY,
+
+    if (linearSol.isSuccess && linearSol.detectedType === 'linear_equation') {
+      if (linearSol.variableName && linearSol.variableValue !== undefined && !isNaN(linearSol.variableValue)) {
+        mathEngine.setVariable(linearSol.variableName, linearSol.variableValue);
+      }
+      evalResult = {
+        status: 'success',
+        value: linearSol.variableValue,
+        displayText: linearSol.result,
+        expressionString: rawExpr,
       };
-    } else {
+      // Place anchor at the end of the entire equation (e.g. to the right of "7")
       anchor = {
         x: lineBounds.maxX + 14,
         y: lineBounds.centerY,
       };
+    } else {
+      // Evaluate standard arithmetic or assignment expression
+      evalResult = mathEngine.evaluate(rawExpr);
+
+      // Determine projection point (directly adjacent to the '=' sign, or right side of line)
+      if (equalsBounds && Math.abs(equalsBounds.maxX - lineBounds.maxX) < 25) {
+        anchor = {
+          x: equalsBounds.maxX + 14,
+          y: equalsBounds.centerY,
+        };
+      } else {
+        anchor = {
+          x: lineBounds.maxX + 14,
+          y: lineBounds.centerY,
+        };
+      }
     }
+
 
     // Plot data if 2D curve
     const plotData = isPlottable ? FunctionPlotter.generatePlot(rawExpr) : null;

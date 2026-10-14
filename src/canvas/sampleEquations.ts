@@ -182,7 +182,54 @@ export const SAMPLE_PRESETS: SamplePreset[] = [
       return strokes;
     },
   },
+  {
+    id: 'linear_algebra',
+    name: '3x + 5 = 7',
+    description: 'Solves algebraic equation for x = 2/3 (0.67)',
+    generateStrokes: (sx, sy) => {
+      const strokes: Stroke[] = [];
+      let x = sx;
+      const y = sy;
+      const w = 3.5;
+      const c = '#1e1b4b';
+
+      // '3'
+      strokes.push(makeStroke([
+        [x, y + 5], [x + 12, y + 5], [x + 5, y + 20], [x + 15, y + 25], [x + 10, y + 40], [x, y + 38]
+      ], c, w));
+      x += 28;
+
+      // 'x'
+      strokes.push(makeStroke([[x + 2, y + 12], [x + 18, y + 35]], c, w));
+      strokes.push(makeStroke([[x + 18, y + 12], [x + 2, y + 35]], c, w));
+      x += 28;
+
+      // '+'
+      strokes.push(makeStroke([[x + 10, y + 10], [x + 10, y + 30]], c, w));
+      strokes.push(makeStroke([[x, y + 20], [x + 20, y + 20]], c, w));
+      x += 30;
+
+      // '5'
+      strokes.push(makeStroke([
+        [x + 16, y + 8], [x + 2, y + 8], [x + 2, y + 22], [x + 15, y + 22], [x + 16, y + 38], [x, y + 38]
+      ], c, w));
+      x += 28;
+
+      // '='
+      strokes.push(makeStroke([[x, y + 18], [x + 20, y + 18]], c, w));
+      strokes.push(makeStroke([[x, y + 28], [x + 20, y + 28]], c, w));
+      x += 32;
+
+      // '7'
+      strokes.push(makeStroke([
+        [x, y + 8], [x + 18, y + 8], [x + 4, y + 40]
+      ], c, w));
+
+      return strokes;
+    },
+  },
 ];
+
 
 
 function makeStroke(pts: [number, number][], color: string, width: number): Stroke {

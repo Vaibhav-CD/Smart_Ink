@@ -29,6 +29,28 @@ describe('QuestionSolver Natural Language & Advanced Math Questions', () => {
     expect(sol.detectedType).toBe('linear_equation');
   });
 
+  it('solves linear equation "3x + 5 = 7"', () => {
+    const sol = QuestionSolver.solve('3x + 5 = 7');
+    expect(sol.isSuccess).toBe(true);
+    expect(sol.detectedType).toBe('linear_equation');
+    expect(sol.result).toContain('2/3');
+    expect(sol.variableValue).toBeCloseTo(0.6667, 3);
+  });
+
+  it('solves linear equation with trailing equals "3x + 5 = 7 ="', () => {
+    const sol = QuestionSolver.solve('3x + 5 = 7 =');
+    expect(sol.isSuccess).toBe(true);
+    expect(sol.detectedType).toBe('linear_equation');
+    expect(sol.result).toContain('2/3');
+  });
+
+  it('solves linear equation with variables on both sides "4x + 2 = 2x + 10"', () => {
+    const sol = QuestionSolver.solve('4x + 2 = 2x + 10');
+    expect(sol.isSuccess).toBe(true);
+    expect(sol.result).toBe('x = 4');
+  });
+
+
   it('solves derivatives: "derivative of x^3"', () => {
     const sol = QuestionSolver.solve('derivative of x^3');
     expect(sol.isSuccess).toBe(true);

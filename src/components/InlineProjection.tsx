@@ -75,13 +75,16 @@ export const InlineProjection: React.FC<InlineProjectionProps> = ({
                   : 'bg-indigo-50/90 dark:bg-zinc-800/90 border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300'
               }`}
             >
-              <span className="text-xl font-bold opacity-75 select-none">=</span>
+              {!displayText.includes('=') && (
+                <span className="text-xl font-bold opacity-75 select-none">=</span>
+              )}
               <span
                 className="text-3xl font-extrabold tracking-tight handwriting-font select-all"
                 style={{ fontFamily: "'Caveat', 'Patrick Hand', cursive" }}
               >
                 {displayText}
               </span>
+
 
               {!isUndefined && !isError && (
                 <button

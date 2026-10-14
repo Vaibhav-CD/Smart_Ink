@@ -1,6 +1,6 @@
 /**
  * Smart_Ink Natural Language Question & Symbolic Math Solver
- * Interprets natural language questions ("what is the value of cos(0)", "solve 2x+6=12", "20% of 150")
+ * Interprets natural language questions ("what is the value of cos(0)", "solve 2x+6=12", "3x+5=7", "20% of 150")
  * and computes step-by-step mathematical answers on-device.
  */
 
@@ -13,13 +13,15 @@ export interface QuestionSolution {
   result: string;
   steps: string[];
   isSuccess: boolean;
+  variableName?: string;
+  variableValue?: number;
 }
 
 export class QuestionSolver {
   private static mathEngine = new MathEngine();
 
   /**
-   * Main entry point: solves text or natural language questions
+   * Main entry point: solves text, natural language questions, or algebraic equations
    */
   public static solve(rawText: string): QuestionSolution {
     const text = rawText.trim();
@@ -34,7 +36,40 @@ export class QuestionSolver {
       };
     }
 
-    // 1. Check for Percentage problem: e.g. "what is 20% of 150" or "15% of 80"
+    // Clean trailing equals if present (e.g. "3x + 5 = 7 =" or "18 + 4 * 3 =")
+    let cleanText = text;
+    if (cleanText.endsWith('=')) {
+      cleanText = cleanText.slice(0, -1).trim();
+    }
+
+    // 1. Check for Linear Algebraic Equation (e.g. "3x + 5 = 7", "2x + 6 = 16", "x + 4 = 10", "solve 5x = 25")
+    if (cleanText.includes('=')) {
+      const parts = cleanText.replace(/^(?:solve\s+)/i, '').split('=');
+      if (parts.length === 2) {
+        const lhs = parts[0].trim();
+        const rhs = parts[1].trim();
+        // Find single-letter variable (e.g., x, y, z, a, b, n)
+        const varMatch = (lhs + rhs).match(/[a-zA-Z]/);
+        if (varMatch) {
+          const varChar = varMatch[0];
+          const sol = this.solveGeneralizedLinear(lhs, rhs, varChar);
+          if (sol) {
+            return {
+              originalQuestion: rawText,
+              detectedType: 'linear_equation',
+              normalizedExpression: `${lhs} = ${rhs}`,
+              result: sol.displayResult,
+              steps: sol.steps,
+              isSuccess: true,
+              variableName: varChar,
+              variableValue: sol.value,
+            };
+          }
+        }
+      }
+    }
+
+    // 2. Check for Percentage problem: e.g. "what is 20% of 150" or "15% of 80"
     const percentMatch = text.match(/(\d+(?:\.\d+)?)\s*%\s*of\s*(\d+(?:\.\d+)?)/i);
     if (percentMatch) {
       const p = parseFloat(percentMatch[1]);
@@ -53,7 +88,7 @@ export class QuestionSolver {
       };
     }
 
-    // 2. Check for Derivative: e.g. "derivative of x^3", "d/dx(x^2)", "d/dx (3x^2)"
+    // 3. Check for Derivative: e.g. "derivative of x^3", "d/dx(x^2)", "d/dx (3x^2)"
     const derivMatch = text.match(/(?:derivative\s+of|d\/dx\s*\(?)\s*([a-zA-Z0-9^+\-* ]+)\)?/i);
     if (derivMatch) {
       const expr = derivMatch[1].trim();
@@ -70,7 +105,7 @@ export class QuestionSolver {
       }
     }
 
-    // 3. Check for Integral: e.g. "integral of x^2", "integrate x^3"
+    // 4. Check for Integral: e.g. "integral of x^2", "integrate x^3"
     const intMatch = text.match(/(?:integral\s+of|integrate)\s+([a-zA-Z0-9^+\-* ]+)/i);
     if (intMatch) {
       const expr = intMatch[1].trim();
@@ -81,24 +116,6 @@ export class QuestionSolver {
           detectedType: 'integral',
           normalizedExpression: `∫ (${expr}) dx`,
           result: sol.result,
-          steps: sol.steps,
-          isSuccess: true,
-        };
-      }
-    }
-
-    // 4. Check for Linear Equation: e.g. "solve 2x + 6 = 16" or "3x - 5 = 10"
-    const solveMatch = text.match(/(?:solve\s+)?([0-9xX+\-*/. ]+)=([0-9xX+\-*/. ]+)/i);
-    if (solveMatch && /[xX]/.test(text) && !text.endsWith('=')) {
-      const lhs = solveMatch[1].trim();
-      const rhs = solveMatch[2].trim();
-      const sol = this.solveLinearEquation(lhs, rhs);
-      if (sol) {
-        return {
-          originalQuestion: rawText,
-          detectedType: 'linear_equation',
-          normalizedExpression: `${lhs} = ${rhs}`,
-          result: `x = ${sol.value}`,
           steps: sol.steps,
           isSuccess: true,
         };
@@ -145,52 +162,149 @@ export class QuestionSolver {
   }
 
   /**
-   * Solves linear equation of form ax + b = c
+   * Generalized single-variable linear equation solver
+   * Supports: 3x + 5 = 7, 2x - 4 = 10, 5x = 25, 4x + 2 = 2x + 10, etc.
    */
-  private static solveLinearEquation(lhs: string, rhs: string): { value: number; steps: string[] } | null {
+  public static solveGeneralizedLinear(
+    lhs: string,
+    rhs: string,
+    varChar: string
+  ): { value: number; displayResult: string; steps: string[] } | null {
     try {
-      // Evaluate RHS as constant
-      const rhsVal = this.mathEngine.evaluate(rhs).value;
-      if (rhsVal === undefined || isNaN(rhsVal)) return null;
+      const leftTerms = this.parseLinearSide(lhs, varChar);
+      const rightTerms = this.parseLinearSide(rhs, varChar);
 
-      // Parse ax + b on LHS
-      const cleanLhs = lhs.replace(/\s+/g, '');
-      const match = cleanLhs.match(/^([+-]?(?:\d+(?:\.\d+)?)?)x([+-]\d+(?:\.\d+)?)?$/i);
-      if (!match) return null;
+      if (!leftTerms || !rightTerms) return null;
 
-      let aStr = match[1];
-      let bStr = match[2];
+      // Equation: leftTerms.a * x + leftTerms.b = rightTerms.a * x + rightTerms.b
+      // (leftTerms.a - rightTerms.a) * x = rightTerms.b - leftTerms.b
+      const coeff = leftTerms.a - rightTerms.a;
+      const constant = rightTerms.b - leftTerms.b;
 
-      let a = 1;
-      if (aStr === '' || aStr === '+') a = 1;
-      else if (aStr === '-') a = -1;
-      else a = parseFloat(aStr);
+      if (Math.abs(coeff) < 1e-12) {
+        if (Math.abs(constant) < 1e-12) {
+          return {
+            value: 0,
+            displayResult: `${varChar} ∈ ℝ (Infinite Solutions)`,
+            steps: ['Both sides are identically equal for all real numbers.'],
+          };
+        }
+        return {
+          value: NaN,
+          displayResult: 'No Solution',
+          steps: ['Contradiction: coefficients cancel out with unequal constants.'],
+        };
+      }
 
-      let b = bStr ? parseFloat(bStr) : 0;
+      const x = constant / coeff;
 
-      if (a === 0) return null;
+      // Format clean answer (e.g. "x = 2/3 (0.67)" or "x = 5")
+      const displayResult = this.formatLinearSolution(varChar, constant, coeff, x);
 
       const steps: string[] = [
-        `Given linear equation: ${lhs} = ${rhs}`,
+        `Original equation: ${lhs} = ${rhs}`,
       ];
 
-      let remaining = rhsVal;
-      if (b !== 0) {
-        remaining = rhsVal - b;
-        steps.push(`Subtract ${b} from both sides: ${a}x = ${remaining}`);
+      if (rightTerms.a !== 0) {
+        steps.push(`Move all terms with ${varChar} to left: ${coeff}${varChar} + ${leftTerms.b} = ${rightTerms.b}`);
       }
 
-      const x = remaining / a;
-      if (a !== 1) {
-        steps.push(`Divide both sides by ${a}: x = ${remaining} / ${a} = ${x}`);
+      if (leftTerms.b !== 0) {
+        steps.push(`Move constant terms to right: ${coeff}${varChar} = ${constant}`);
+      }
+
+      if (coeff !== 1) {
+        steps.push(`Divide both sides by ${coeff}: ${varChar} = ${constant} / ${coeff} = ${this.formatNumber(x)}`);
       } else {
-        steps.push(`Solution: x = ${x}`);
+        steps.push(`Solution: ${varChar} = ${this.formatNumber(x)}`);
       }
 
-      return { value: x, steps };
+      return {
+        value: x,
+        displayResult,
+        steps,
+      };
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Parses one side of a linear equation into (a * varChar + b)
+   */
+  private static parseLinearSide(side: string, varChar: string): { a: number; b: number } | null {
+    const s = side.replace(/\s+/g, '');
+    if (!s) return { a: 0, b: 0 };
+
+    // Split into signed terms: e.g. "+3x", "-5", "+2x", "7"
+    const termRegex = /([+-]?[^+-]+)/g;
+    const rawTerms = s.match(termRegex);
+    if (!rawTerms) return null;
+
+    let a = 0;
+    let b = 0;
+
+    for (const term of rawTerms) {
+      if (term.includes(varChar)) {
+        // Variable term
+        const coeffStr = term.replace(varChar, '');
+        let coeff = 1;
+        if (coeffStr === '' || coeffStr === '+') coeff = 1;
+        else if (coeffStr === '-') coeff = -1;
+        else {
+          coeff = parseFloat(coeffStr);
+          if (isNaN(coeff)) return null;
+        }
+        a += coeff;
+      } else {
+        // Constant term
+        const val = parseFloat(term);
+        if (isNaN(val)) return null;
+        b += val;
+      }
+    }
+
+    return { a, b };
+  }
+
+  /**
+   * Formats linear equation solution nicely with fraction and decimal if needed
+   */
+  private static formatLinearSolution(
+    varChar: string,
+    constant: number,
+    coeff: number,
+    x: number
+  ): string {
+    // If integer
+    if (Math.abs(x - Math.round(x)) < 1e-9) {
+      return `${varChar} = ${Math.round(x)}`;
+    }
+
+    // Attempt fraction reduction if integers
+    if (Number.isInteger(constant) && Number.isInteger(coeff)) {
+      const gcd = this.gcd(Math.abs(constant), Math.abs(coeff));
+      let num = constant / gcd;
+      let den = coeff / gcd;
+      if (den < 0) {
+        num = -num;
+        den = -den;
+      }
+
+      const decStr = x.toFixed(2);
+      return `${varChar} = ${num}/${den} (${decStr})`;
+    }
+
+    return `${varChar} = ${this.formatNumber(x)}`;
+  }
+
+  private static gcd(a: number, b: number): number {
+    return b === 0 ? a : this.gcd(b, a % b);
+  }
+
+  private static formatNumber(num: number): string {
+    const factor = 10000;
+    return (Math.round(num * factor) / factor).toString();
   }
 
   /**
